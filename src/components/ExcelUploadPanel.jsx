@@ -22,17 +22,25 @@ import {
   Plus,
   Edit2,
   Save,
-  X
+  X,
+  CheckCircle,
+  XCircle,
+  Clock,
+  MessageCircle,
+  UserCheck
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import './ExcelUploadPanel.css';
 
 const ExcelUploadPanel = () => {
   const [invitedGuests, setInvitedGuests] = useState([]);
+  const [guestResponses, setGuestResponses] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingResponses, setLoadingResponses] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [activeTab, setActiveTab] = useState('invited'); // 'invited' o 'responses'
 
   // ✅ NUEVO: Estados para CRUD
   const [showAddForm, setShowAddForm] = useState(false);
@@ -57,6 +65,68 @@ const ExcelUploadPanel = () => {
 
     return () => unsubscribe();
   }, []);
+
+  // ✅ NUEVO: Escuchar respuestas de invitados desde la tabla 'guests'
+  useEffect(() => {
+    // Intentamos ordenar por submittedAt, si no existe por createdAt
+    const q = query(collection(db, 'guests'));
+    
+    const unsubscribe = onSnapshot(q, (querySnapshot) => {
+      const responsesData = [];
+      querySnapshot.forEach((doc) => {
+        responsesData.push({ id: doc.id, ...doc.data() });
+      });
+      
+      // Ordenar manualmente por submittedAt o createdAt (más reciente primero)
+      responsesData.sort((a, b) => {
+        const aDate = a.submittedAt || a.createdAt;
+        const bDate = b.submittedAt || b.createdAt;
+        
+        if (!aDate && !bDate) return 0;
+        if (!aDate) return 1;
+        if (!bDate) return -1;
+        
+        // Convertir a timestamp si es necesario
+        const aTime = aDate.toDate ? aDate.toDate().getTime() : new Date(aDate).getTime();
+        const bTime = bDate.toDate ? bDate.toDate().getTime() : new Date(bDate).getTime();
+        
+        return bTime - aTime; // Más reciente primero
+      });
+      
+      setGuestResponses(responsesData);
+      setLoadingResponses(false);
+      console.log('Respuestas cargadas:', responsesData); // Para debug
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // ✅ NUEVO: Funciones auxiliares para estadísticas
+  const getResponseStats = () => {
+    const accepted = guestResponses.filter(guest => guest.confirmed === true).length;
+    const declined = guestResponses.filter(guest => guest.confirmed === false).length;
+    const pending = invitedGuests.length - guestResponses.length;
+    
+    return { accepted, declined, pending, total: invitedGuests.length };
+  };
+
+  // ✅ NUEVO: Formatear fecha
+  const formatDate = (timestamp) => {
+    if (!timestamp) return 'Sin fecha';
+    
+    try {
+      const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+      return date.toLocaleDateString('es-ES', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      return 'Fecha inválida';
+    }
+  };
 
   // ✅ NUEVO: Agregar invitado individual
   const handleAddGuest = async () => {
@@ -337,244 +407,396 @@ const ExcelUploadPanel = () => {
           <p>Gestiona la lista de invitados permitidos para la boda</p>
         </div>
 
-        {/* Estadísticas */}
-        <div className="stats-section">
-          <div className="stats-header">
-            <h2>Resumen</h2>
-            <div className="stats-actions">
-              {/* ✅ NUEVO: Botón Agregar */}
-              <button 
-                onClick={() => setShowAddForm(true)} 
-                className="btn btn-primary"
-                style={{marginRight: '10px'}}
-              >
-                <Plus size={16} />
-                Agregar Invitado
-              </button>
-              
-              {invitedGuests.length > 0 && (
-                <button onClick={handleClearAll} className="btn btn-danger">
-                  <Trash2 size={16} />
-                  Limpiar Lista
-                </button>
-              )}
-            </div>
-          </div>
-          
-          <div className="stats-grid">
-            <div className="stat-card stat-blue">
-              <Users size={32} />
-              <div>
-                <p>Total Invitados Permitidos</p>
-                <span className="stat-number">{invitedGuests.length}</span>
-              </div>
-            </div>
-            
-            <div className="stat-card stat-green">
-              <Check size={32} />
-              <div>
-                <p>Lista Actualizada</p>
-                <span className="stat-text">
-                  {invitedGuests.length > 0 ? 'Lista cargada' : 'Sin cargar'}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ✅ NUEVO: Formulario para agregar invitado */}
-        {showAddForm && (
-          <div className="add-form-section">
-            <div className="add-form-header">
-              <h3>Agregar Nuevo Invitado</h3>
-              <button 
-                onClick={() => {setShowAddForm(false); setNewGuestName('');}} 
-                className="btn-close"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="add-form-content">
-              <div className="form-group">
-                <input
-                  type="text"
-                  value={newGuestName}
-                  onChange={(e) => setNewGuestName(e.target.value)}
-                  placeholder="Nombre completo del invitado"
-                  onKeyPress={(e) => e.key === 'Enter' && handleAddGuest()}
-                  style={{flex: 1, marginRight: '10px'}}
-                />
-                <button
-                  onClick={handleAddGuest}
-                  disabled={adding || !newGuestName.trim()}
-                  className="btn btn-primary"
-                >
-                  {adding ? 'Agregando...' : 'Agregar'}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Zona de subida */}
-        <div className="upload-section">
-          <div className="upload-header">
-            <h2>Subir Lista de Excel</h2>
-            <button onClick={downloadTemplate} className="btn btn-secondary">
-              <Download size={16} />
-              Descargar Plantilla
-            </button>
-          </div>
-
-          <div
-            className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
+        {/* ✅ NUEVO: Pestañas de navegación */}
+        <div className="tabs-container">
+          <button 
+            className={`tab ${activeTab === 'invited' ? 'active' : ''}`}
+            onClick={() => setActiveTab('invited')}
           >
-            <div className="upload-content">
-              <FileSpreadsheet size={64} />
-              
-              {uploading ? (
-                <div className="uploading">
-                  <div className="spinner"></div>
-                  <p className="upload-title">Procesando archivo...</p>
-                  <p className="upload-subtitle">Extrayendo nombres y subiendo a la base de datos</p>
-                </div>
-              ) : (
-                <div className="upload-ready">
-                  <p className="upload-title">Arrastra tu archivo Excel aquí</p>
-                  <p className="upload-subtitle">o haz click para seleccionar (formatos: .xlsx, .xls)</p>
+            <Users size={20} />
+            Lista de Invitados ({invitedGuests.length})
+          </button>
+          <button 
+            className={`tab ${activeTab === 'responses' ? 'active' : ''}`}
+            onClick={() => setActiveTab('responses')}
+          >
+            <UserCheck size={20} />
+            Respuestas ({guestResponses.length})
+          </button>
+        </div>
+
+        {/* Contenido condicional según la pestaña activa */}
+        {activeTab === 'invited' ? (
+          <>
+            {/* Estadísticas */}
+            <div className="stats-section">
+              <div className="stats-header">
+                <h2>Resumen</h2>
+                <div className="stats-actions">
+                  {/* ✅ NUEVO: Botón Agregar */}
+                  <button 
+                    onClick={() => setShowAddForm(true)} 
+                    className="btn btn-primary"
+                    style={{marginRight: '10px'}}
+                  >
+                    <Plus size={16} />
+                    Agregar Invitado
+                  </button>
                   
-                  <input
-                    type="file"
-                    accept=".xlsx,.xls"
-                    onChange={(e) => handleFileUpload(e.target.files[0])}
-                    className="file-input"
-                    id="file-upload"
-                  />
-                  <label htmlFor="file-upload" className="btn btn-primary">
-                    <Upload size={20} />
-                    Seleccionar Archivo
-                  </label>
+                  {invitedGuests.length > 0 && (
+                    <button onClick={handleClearAll} className="btn btn-danger">
+                      <Trash2 size={16} />
+                      Limpiar Lista
+                    </button>
+                  )}
                 </div>
-              )}
-            </div>
-          </div>
-
-          {/* Instrucciones */}
-          <div className="instructions">
-            <AlertCircle size={20} />
-            <div>
-              <p className="instructions-title">Instrucciones:</p>
-              <ul>
-                <li>El archivo debe ser Excel (.xlsx o .xls)</li>
-                <li>Los nombres deben estar en la primera columna</li>
-                <li>Un nombre por fila</li>
-                <li>Se ignorarán nombres duplicados</li>
-              </ul>
-            </div>
-          </div>
-
-          {/* Resultado */}
-          {uploadResult && (
-            <div className="result">
-              <Check size={20} />
-              <div>
-                <p className="result-title">Resultado de la subida:</p>
-                <div className="result-grid">
+              </div>
+              
+              <div className="stats-grid">
+                <div className="stat-card stat-blue">
+                  <Users size={32} />
                   <div>
-                    <span>Total procesados:</span>
-                    <span>{uploadResult.total}</span>
+                    <p>Total Invitados Permitidos</p>
+                    <span className="stat-number">{invitedGuests.length}</span>
                   </div>
+                </div>
+                
+                <div className="stat-card stat-green">
+                  <Check size={32} />
                   <div>
-                    <span>Agregados:</span>
-                    <span className="text-green">{uploadResult.added}</span>
-                  </div>
-                  <div>
-                    <span>Duplicados:</span>
-                    <span className="text-yellow">{uploadResult.duplicates}</span>
-                  </div>
-                  <div>
-                    <span>Errores:</span>
-                    <span className="text-red">{uploadResult.errors}</span>
+                    <p>Lista Actualizada</p>
+                    <span className="stat-text">
+                      {invitedGuests.length > 0 ? 'Lista cargada' : 'Sin cargar'}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Lista actual */}
-        {invitedGuests.length > 0 && (
-          <div className="guests-section">
-            <h2>Lista Actual de Invitados Permitidos ({invitedGuests.length})</h2>
-            
-            <div className="guests-list">
-              {invitedGuests.map((guest, index) => (
-                <div key={guest.id} className="guest-item">
-                  <div className="guest-info">
-                    <span className="guest-number">
-                      {String(index + 1).padStart(3, '0')}
-                    </span>
-                    
-                    {/* ✅ NUEVO: Edición inline */}
-                    {editingGuest === guest.id ? (
-                      <input
-                        type="text"
-                        value={editGuestName}
-                        onChange={(e) => setEditGuestName(e.target.value)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleUpdateGuest(guest.id)}
-                        className="edit-input"
-                        autoFocus
-                      />
-                    ) : (
-                      <span className="guest-name">{guest.name}</span>
-                    )}
-                  </div>
-                  
-                  <div className="guest-actions">
-                    {editingGuest === guest.id ? (
-                      <>
-                        <button
-                          onClick={() => handleUpdateGuest(guest.id)}
-                          disabled={updating}
-                          className="btn-save"
-                          title="Guardar cambios"
-                        >
-                          <Save size={16} />
-                        </button>
-                        <button
-                          onClick={cancelEdit}
-                          className="btn-cancel"
-                          title="Cancelar edición"
-                        >
-                          <X size={16} />
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => startEdit(guest)}
-                          className="btn-edit"
-                          title="Editar nombre"
-                        >
-                          <Edit2 size={16} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteGuest(guest.id, guest.name)}
-                          className="btn-delete"
-                          title="Eliminar invitado"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </>
-                    )}
+            {/* ✅ NUEVO: Formulario para agregar invitado */}
+            {showAddForm && (
+              <div className="add-form-section">
+                <div className="add-form-header">
+                  <h3>Agregar Nuevo Invitado</h3>
+                  <button 
+                    onClick={() => {setShowAddForm(false); setNewGuestName('');}} 
+                    className="btn-close"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div className="add-form-content">
+                  <div className="form-group">
+                    <input
+                      type="text"
+                      value={newGuestName}
+                      onChange={(e) => setNewGuestName(e.target.value)}
+                      placeholder="Nombre completo del invitado"
+                      onKeyPress={(e) => e.key === 'Enter' && handleAddGuest()}
+                      style={{flex: 1, marginRight: '10px'}}
+                    />
+                    <button
+                      onClick={handleAddGuest}
+                      disabled={adding || !newGuestName.trim()}
+                      className="btn btn-primary"
+                    >
+                      {adding ? 'Agregando...' : 'Agregar'}
+                    </button>
                   </div>
                 </div>
-              ))}
+              </div>
+            )}
+
+            {/* Zona de subida */}
+            <div className="upload-section">
+              <div className="upload-header">
+                <h2>Subir Lista de Excel</h2>
+                <button onClick={downloadTemplate} className="btn btn-secondary">
+                  <Download size={16} />
+                  Descargar Plantilla
+                </button>
+              </div>
+
+              <div
+                className={`upload-zone ${dragOver ? 'drag-over' : ''}`}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+              >
+                <div className="upload-content">
+                  <FileSpreadsheet size={64} />
+                  
+                  {uploading ? (
+                    <div className="uploading">
+                      <div className="spinner"></div>
+                      <p className="upload-title">Procesando archivo...</p>
+                      <p className="upload-subtitle">Extrayendo nombres y subiendo a la base de datos</p>
+                    </div>
+                  ) : (
+                    <div className="upload-ready">
+                      <p className="upload-title">Arrastra tu archivo Excel aquí</p>
+                      <p className="upload-subtitle">o haz click para seleccionar (formatos: .xlsx, .xls)</p>
+                      
+                      <input
+                        type="file"
+                        accept=".xlsx,.xls"
+                        onChange={(e) => handleFileUpload(e.target.files[0])}
+                        className="file-input"
+                        id="file-upload"
+                      />
+                      <label htmlFor="file-upload" className="btn btn-primary">
+                        <Upload size={20} />
+                        Seleccionar Archivo
+                      </label>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Instrucciones */}
+              <div className="instructions">
+                <AlertCircle size={20} />
+                <div>
+                  <p className="instructions-title">Instrucciones:</p>
+                  <ul>
+                    <li>El archivo debe ser Excel (.xlsx o .xls)</li>
+                    <li>Los nombres deben estar en la primera columna</li>
+                    <li>Un nombre por fila</li>
+                    <li>Se ignorarán nombres duplicados</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Resultado */}
+              {uploadResult && (
+                <div className="result">
+                  <Check size={20} />
+                  <div>
+                    <p className="result-title">Resultado de la subida:</p>
+                    <div className="result-grid">
+                      <div>
+                        <span>Total procesados:</span>
+                        <span>{uploadResult.total}</span>
+                      </div>
+                      <div>
+                        <span>Agregados:</span>
+                        <span className="text-green">{uploadResult.added}</span>
+                      </div>
+                      <div>
+                        <span>Duplicados:</span>
+                        <span className="text-yellow">{uploadResult.duplicates}</span>
+                      </div>
+                      <div>
+                        <span>Errores:</span>
+                        <span className="text-red">{uploadResult.errors}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
+
+            {/* Lista actual */}
+            {invitedGuests.length > 0 && (
+              <div className="guests-section">
+                <h2>Lista Actual de Invitados Permitidos ({invitedGuests.length})</h2>
+                
+                <div className="guests-list">
+                  {invitedGuests.map((guest, index) => (
+                    <div key={guest.id} className="guest-item">
+                      <div className="guest-info">
+                        <span className="guest-number">
+                          {String(index + 1).padStart(3, '0')}
+                        </span>
+                        
+                        {/* ✅ NUEVO: Edición inline */}
+                        {editingGuest === guest.id ? (
+                          <input
+                            type="text"
+                            value={editGuestName}
+                            onChange={(e) => setEditGuestName(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && handleUpdateGuest(guest.id)}
+                            className="edit-input"
+                            autoFocus
+                          />
+                        ) : (
+                          <span className="guest-name">{guest.name}</span>
+                        )}
+                      </div>
+                      
+                      <div className="guest-actions">
+                        {editingGuest === guest.id ? (
+                          <>
+                            <button
+                              onClick={() => handleUpdateGuest(guest.id)}
+                              disabled={updating}
+                              className="btn-save"
+                              title="Guardar cambios"
+                            >
+                              <Save size={16} />
+                            </button>
+                            <button
+                              onClick={cancelEdit}
+                              className="btn-cancel"
+                              title="Cancelar edición"
+                            >
+                              <X size={16} />
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => startEdit(guest)}
+                              className="btn-edit"
+                              title="Editar nombre"
+                            >
+                              <Edit2 size={16} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteGuest(guest.id, guest.name)}
+                              className="btn-delete"
+                              title="Eliminar invitado"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {/* ✅ NUEVO: Sección de Respuestas */}
+            {loadingResponses ? (
+              <div className="loading-container">
+                <div className="loading-content">
+                  <MessageCircle size={64} />
+                  <p>Cargando respuestas...</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Estadísticas de respuestas */}
+                <div className="stats-section">
+                  <div className="stats-header">
+                    <h2>Estadísticas de Respuestas</h2>
+                  </div>
+                  
+                  <div className="stats-grid">
+                    <div className="stat-card stat-green">
+                      <CheckCircle size={32} />
+                      <div>
+                        <p>Confirmaron Asistencia</p>
+                        <span className="stat-number">{getResponseStats().accepted}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="stat-card stat-red">
+                      <XCircle size={32} />
+                      <div>
+                        <p>No Asistirán</p>
+                        <span className="stat-number">{getResponseStats().declined}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="stat-card stat-yellow">
+                      <Clock size={32} />
+                      <div>
+                        <p>Sin Responder</p>
+                        <span className="stat-number">{getResponseStats().pending}</span>
+                      </div>
+                    </div>
+                    
+                    <div className="stat-card stat-blue">
+                      <Users size={32} />
+                      <div>
+                        <p>Total Respuestas</p>
+                        <span className="stat-number">{guestResponses.length}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Lista de respuestas */}
+                {guestResponses.length > 0 ? (
+                  <div className="responses-section">
+                    <h2>Respuestas de Invitados ({guestResponses.length})</h2>
+                    
+                    <div className="responses-list">
+                      {guestResponses.map((response, index) => (
+                        <div key={response.id} className={`response-item ${response.confirmed ? 'attending' : 'not-attending'}`}>
+                          <div className="response-info">
+                            <span className="response-number">
+                              {String(index + 1).padStart(3, '0')}
+                            </span>
+                            
+                            <div className="response-details">
+                              <div className="response-header">
+                                <span className="response-name">{response.name || 'Sin nombre'}</span>
+                                <div className="response-status">
+                                  {response.confirmed ? (
+                                    <>
+                                      <CheckCircle size={20} className="status-icon accepted" />
+                                      <span className="status-text accepted">Confirmó asistencia</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <XCircle size={20} className="status-icon declined" />
+                                      <span className="status-text declined">No asistirá</span>
+                                    </>
+                                  )}
+                                </div>
+                              </div>
+                              
+                              <div className="response-meta">
+                                <span className="response-date">
+                                  📅 {formatDate(response.submittedAt || response.createdAt)}
+                                </span>
+                                {response.email && (
+                                  <span className="response-email">
+                                    📧 {response.email}
+                                  </span>
+                                )}
+                                {response.phone && (
+                                  <span className="response-phone">
+                                    📱 {response.phone}
+                                  </span>
+                                )}
+                              </div>
+                              
+                              {response.message && (
+                                <div className="response-message">
+                                  <MessageCircle size={16} />
+                                  <span>"{response.message}"</span>
+                                </div>
+                              )}
+                              
+                              {response.companions && response.companions > 0 && (
+                                <div className="response-companions">
+                                  <Users size={16} />
+                                  <span>Acompañantes: {response.companions}</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="no-responses">
+                    <MessageCircle size={64} />
+                    <h3>No hay respuestas aún</h3>
+                    <p>Los invitados aún no han respondido a la invitación</p>
+                  </div>
+                )}
+              </>
+            )}
+          </>
         )}
       </div>
     </div>
