@@ -49,6 +49,10 @@ const ExcelUploadPanel = () => {
   const [editGuestName, setEditGuestName] = useState('');
   const [adding, setAdding] = useState(false);
   const [updating, setUpdating] = useState(false);
+  // ✅ NUEVO: Filtro de respuestas
+  const [responseFilter, setResponseFilter] = useState('all'); // 'all' | 'accepted' | 'declined' | 'pending'
+  // ✅ NUEVO: Búsqueda por nombre
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Escuchar cambios en la base de datos
   useEffect(() => {
@@ -105,9 +109,28 @@ const ExcelUploadPanel = () => {
   const getResponseStats = () => {
     const accepted = guestResponses.filter(guest => guest.confirmed === true).length;
     const declined = guestResponses.filter(guest => guest.confirmed === false).length;
-    const pending = invitedGuests.length - guestResponses.length;
+    const pending = getPendingGuests().length;
     
     return { accepted, declined, pending, total: invitedGuests.length };
+  };
+
+  // ✅ NUEVO: Utilidades para filtros
+  const normalizeName = (name) => (name || '').toString().trim().toLowerCase();
+  const matchesSearch = (name) =>
+    normalizeName(name).includes(normalizeName(searchQuery));
+
+  const getPendingGuests = () => {
+    if (!invitedGuests || !guestResponses) return [];
+    return invitedGuests.filter(inv =>
+      !guestResponses.some(res => normalizeName(res.name) === normalizeName(inv.name))
+    );
+  };
+
+  const getResponsesToShow = () => {
+    if (responseFilter === 'accepted') return guestResponses.filter(r => r.confirmed === true);
+    if (responseFilter === 'declined') return guestResponses.filter(r => r.confirmed === false);
+    if (responseFilter === 'pending') return getPendingGuests();
+    return guestResponses;
   };
 
   // ✅ NUEVO: Formatear fecha
@@ -600,9 +623,21 @@ const ExcelUploadPanel = () => {
             {invitedGuests.length > 0 && (
               <div className="guests-section">
                 <h2>Lista Actual de Invitados Permitidos ({invitedGuests.length})</h2>
+                {/* ✅ NUEVO: Buscador en invitados */}
+                <div style={{ display: 'flex', marginBottom: '12px' }}>
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar por nombre..."
+                    style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #ddd' }}
+                  />
+                </div>
                 
                 <div className="guests-list">
-                  {invitedGuests.map((guest, index) => (
+                  {invitedGuests
+                    .filter((guest) => matchesSearch(guest.name))
+                    .map((guest, index) => (
                     <div key={guest.id} className="guest-item">
                       <div className="guest-info">
                         <span className="guest-number">
@@ -721,14 +756,43 @@ const ExcelUploadPanel = () => {
                   </div>
                 </div>
 
-                {/* Lista de respuestas */}
-                {guestResponses.length > 0 ? (
+                {/* Lista de respuestas y filtros */}
+                {guestResponses.length > 0 || getPendingGuests().length > 0 ? (
                   <div className="responses-section">
-                    <h2>Respuestas de Invitados ({guestResponses.length})</h2>
+                    <h2>Respuestas de Invitados ({getResponsesToShow().length})</h2>
+
+                    {/* ✅ NUEVO: Controles de filtro */}
+                    <div className="filters" style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <button className={`btn ${responseFilter === 'all' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setResponseFilter('all')}>
+                        Todos ({guestResponses.length})
+                      </button>
+                      <button className={`btn ${responseFilter === 'accepted' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setResponseFilter('accepted')}>
+                        Sí ({getResponseStats().accepted})
+                      </button>
+                      <button className={`btn ${responseFilter === 'declined' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setResponseFilter('declined')}>
+                        No ({getResponseStats().declined})
+                      </button>
+                      <button className={`btn ${responseFilter === 'pending' ? 'btn-primary' : 'btn-secondary'}`} onClick={() => setResponseFilter('pending')}>
+                        Sin responder ({getPendingGuests().length})
+                      </button>
+                      {/* ✅ NUEVO: Buscador en respuestas */}
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Buscar por nombre..."
+                        style={{ flex: 1, minWidth: '220px', padding: '10px', borderRadius: '8px', border: '1px solid #ddd' }}
+                      />
+                    </div>
                     
                     <div className="responses-list">
-                      {guestResponses.map((response, index) => (
-                        <div key={response.id} className={`response-item ${response.confirmed ? 'attending' : 'not-attending'}`}>
+                      {getResponsesToShow()
+                        .filter((item) => matchesSearch(item.name))
+                        .map((item, index) => (
+                        <div
+                          key={item.id || item.name}
+                          className={`response-item ${responseFilter === 'pending' ? 'pending' : item.confirmed ? 'attending' : 'not-attending'}`}
+                        >
                           <div className="response-info">
                             <span className="response-number">
                               {String(index + 1).padStart(3, '0')}
@@ -736,9 +800,14 @@ const ExcelUploadPanel = () => {
                             
                             <div className="response-details">
                               <div className="response-header">
-                                <span className="response-name">{response.name || 'Sin nombre'}</span>
+                                <span className="response-name">{responseFilter === 'pending' ? (item.name || 'Sin nombre') : (item.name || 'Sin nombre')}</span>
                                 <div className="response-status">
-                                  {response.confirmed ? (
+                                  {responseFilter === 'pending' ? (
+                                    <>
+                                      <Clock size={20} className="status-icon pending" />
+                                      <span className="status-text pending">Sin responder</span>
+                                    </>
+                                  ) : item.confirmed ? (
                                     <>
                                       <CheckCircle size={20} className="status-icon accepted" />
                                       <span className="status-text accepted">Confirmó asistencia</span>
@@ -752,34 +821,38 @@ const ExcelUploadPanel = () => {
                                 </div>
                               </div>
                               
-                              <div className="response-meta">
-                                <span className="response-date">
-                                  📅 {formatDate(response.submittedAt || response.createdAt)}
-                                </span>
-                                {response.email && (
-                                  <span className="response-email">
-                                    📧 {response.email}
-                                  </span>
-                                )}
-                                {response.phone && (
-                                  <span className="response-phone">
-                                    📱 {response.phone}
-                                  </span>
-                                )}
-                              </div>
-                              
-                              {response.message && (
-                                <div className="response-message">
-                                  <MessageCircle size={16} />
-                                  <span>"{response.message}"</span>
-                                </div>
-                              )}
-                              
-                              {response.companions && response.companions > 0 && (
-                                <div className="response-companions">
-                                  <Users size={16} />
-                                  <span>Acompañantes: {response.companions}</span>
-                                </div>
+                              {responseFilter !== 'pending' && (
+                                <>
+                                  <div className="response-meta">
+                                    <span className="response-date">
+                                      📅 {formatDate(item.submittedAt || item.createdAt)}
+                                    </span>
+                                    {item.email && (
+                                      <span className="response-email">
+                                        📧 {item.email}
+                                      </span>
+                                    )}
+                                    {item.phone && (
+                                      <span className="response-phone">
+                                        📱 {item.phone}
+                                      </span>
+                                    )}
+                                  </div>
+                                  
+                                  {item.message && (
+                                    <div className="response-message">
+                                      <MessageCircle size={16} />
+                                      <span>"{item.message}"</span>
+                                    </div>
+                                  )}
+                                  
+                                  {item.companions && item.companions > 0 && (
+                                    <div className="response-companions">
+                                      <Users size={16} />
+                                      <span>Acompañantes: {item.companions}</span>
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </div>
                           </div>
